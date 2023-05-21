@@ -1,0 +1,39 @@
+tmp
+
+artifacts
+cuda_*.exe
+miniconda3.exe
+vs_buildtools.exe
+
+
+# all folders starting with _ are local
+_*/
+
+# generated folders
+torchprimitivesdf/version.py
+build/
+tests/outputs
+torchprimitivesdf.egg-info
+*.so
+*.egg
+.eggs/
+
+# byte-compiled python files
+*.py[cod]
+
+# pip cache
+.cache
+__pycache__
+
+# editor specific
+*~
+.idea
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/settings.json
+.vscode/tasks.json
+*.sw*
+
+# profiling
+*.qdrep
+*.sqlite
