@@ -132,13 +132,13 @@ __device__ __forceinline__ vector_t min_vec(vector_t a, scalar_t b) {
 }
 
 template<typename scalar_t, typename vector_t>
-__device__ __forceinline__ scalar_t min(vector_t a) {
-    return std::min(a.x, std::min(a.y, a.z));
+__device__ __forceinline__ scalar_t min_vec(vector_t a) {
+    return min(a.x, min(a.y, a.z));
 }
 
 template<typename scalar_t, typename vector_t>
-__device__ __forceinline__ scalar_t max(vector_t a) {
-    return std::max(a.x, std::max(a.y, a.z));
+__device__ __forceinline__ scalar_t max_vec(vector_t a) {
+    return max(a.x, max(a.y, a.z));
 }
 
 template<typename scalar_t>
@@ -158,7 +158,7 @@ __global__ void box_distance_forward_cuda_kernel(
     for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
         vector_t q = abs_vec(points[point_id]) - *box;
         vector_t q_clamped = max_vec(q, scalar_t(0));
-        distances[point_id] = dot(q_clamped, q_clamped) + square(std::min(max<scalar_t, vector_t>(q), scalar_t(0)));
+        distances[point_id] = dot(q_clamped, q_clamped) + square(min(max_vec<scalar_t, vector_t>(q), scalar_t(0)));
         dis_signs[point_id] = (q.x > 0) || (q.y > 0) || (q.z > 0);
         closest_points[point_id] = clamp_vec(points[point_id], - *box, *box);
         if (!dis_signs[point_id]) {
@@ -197,19 +197,16 @@ void box_distance_forward_cuda_impl(
     const int num_threads = 512;
     const int num_points = points.size(0);
     const int num_blocks = (num_points + num_threads - 1) / num_threads;
-    AT_DISPATCH_FLOATING_TYPES(points.scalar_type(), "box_distance_forward_cuda", [&] {
-        using vector_t = ScalarTypeToVec3<scalar_t>::type;
-        const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
-        auto stream = at::cuda::getCurrentCUDAStream();
-        box_distance_forward_cuda_kernel<scalar_t, vector_t><<<num_blocks, num_threads, 0, stream>>>(
-            reinterpret_cast<vector_t*>(points.data_ptr<scalar_t>()),
-            reinterpret_cast<vector_t*>(box.data_ptr<scalar_t>()),
-            points.size(0),
-            distances.data_ptr<scalar_t>(),
-            dis_signs.data_ptr<bool>(),
-            reinterpret_cast<vector_t*>(closest_points.data_ptr<scalar_t>()));
-        CUDA_CHECK(cudaGetLastError());
-    });
+    using scalar_t = float;
+    using vector_t = ScalarTypeToVec3<scalar_t>::type;
+    const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
+    box_distance_forward_cuda_kernel<scalar_t, vector_t><<<num_blocks, num_threads>>>(
+        reinterpret_cast<vector_t*>(points.data_ptr<scalar_t>()),
+        reinterpret_cast<vector_t*>(box.data_ptr<scalar_t>()),
+        points.size(0),
+        distances.data_ptr<scalar_t>(),
+        dis_signs.data_ptr<bool>(),
+        reinterpret_cast<vector_t*>(closest_points.data_ptr<scalar_t>()));
 }
 
 void box_distance_backward_cuda_impl(
@@ -218,20 +215,18 @@ void box_distance_backward_cuda_impl(
     at::Tensor closest_points, 
     at::Tensor grad_points) {
 
-    DISPATCH_INPUT_TYPES(points.scalar_type(), scalar_t, "box_distance_backward_cuda", [&] {
-        const int num_points = points.size(0);
-        const int num_blocks = (num_points + num_threads - 1) / num_threads;
-        using vector_t = ScalarTypeToVec3<scalar_t>::type;
-        const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
-        auto stream = at::cuda::getCurrentCUDAStream();
-        box_distance_backward_cuda_kernel<scalar_t, vector_t><<<num_blocks, num_threads, 0, stream>>>(
-            grad_distances.data_ptr<scalar_t>(),
-            reinterpret_cast<vector_t*>(points.data_ptr<scalar_t>()),
-            reinterpret_cast<vector_t*>(closest_points.data_ptr<scalar_t>()),
-            points.size(0),
-            reinterpret_cast<vector_t*>(grad_points.data_ptr<scalar_t>()));
-        CUDA_CHECK(cudaGetLastError());
-    });
+    const int num_threads = 512;
+    const int num_points = points.size(0);
+    const int num_blocks = (num_points + num_threads - 1) / num_threads;
+    using scalar_t = float;
+    using vector_t = ScalarTypeToVec3<scalar_t>::type;
+    const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
+    box_distance_backward_cuda_kernel<scalar_t, vector_t><<<num_blocks, num_threads>>>(
+        grad_distances.data_ptr<scalar_t>(),
+        reinterpret_cast<vector_t*>(points.data_ptr<scalar_t>()),
+        reinterpret_cast<vector_t*>(closest_points.data_ptr<scalar_t>()),
+        points.size(0),
+        reinterpret_cast<vector_t*>(grad_points.data_ptr<scalar_t>()));
 }
 
 }  // namespace primitive
