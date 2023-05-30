@@ -257,6 +257,7 @@ void box_distance_forward_cuda_impl(
         distances.data_ptr<scalar_t>(),
         dis_signs.data_ptr<bool>(),
         reinterpret_cast<vector_t*>(closest_points.data_ptr<scalar_t>()));
+    CUDA_CHECK(cudaGetLastError());
 }
 
 void box_distance_backward_cuda_impl(
@@ -277,6 +278,7 @@ void box_distance_backward_cuda_impl(
         reinterpret_cast<vector_t*>(closest_points.data_ptr<scalar_t>()),
         points.size(0),
         reinterpret_cast<vector_t*>(grad_points.data_ptr<scalar_t>()));
+    CUDA_CHECK(cudaGetLastError());
 }
 
 }  // namespace primitive
