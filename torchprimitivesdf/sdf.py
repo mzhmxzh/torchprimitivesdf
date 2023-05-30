@@ -49,10 +49,10 @@ class _BoxDistanceCuda(torch.autograd.Function):
         grad_distances = grad_distances.contiguous()
         grad_points = torch.zeros_like(points)
         grad_box = None
-        if points.is_cuda:
-            _C.box_distance_backward_cuda(grad_distances, points, closest_points, grad_points)
-        else:
-            _C.box_distance_backward(grad_distances, points, closest_points, grad_points)
+        # if points.is_cuda:
+        #     _C.box_distance_backward_cuda(grad_distances, points, closest_points, grad_points)
+        # else:
+        #     _C.box_distance_backward(grad_distances, points, closest_points, grad_points)
         # _C.box_distance_backward_cuda(grad_distances, points, closest_points, grad_points)
-        # _C.box_distance_backward(grad_distances, points, closest_points, grad_points)
+        _C.box_distance_backward(grad_distances, points, closest_points, grad_points)
         return grad_points, grad_box
