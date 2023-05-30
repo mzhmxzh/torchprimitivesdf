@@ -26,23 +26,73 @@
 
 namespace primitive {
 
+struct my_float3 {
+    float x, y, z;
+    __device__ __forceinline__ float operator[](int i) const { 
+        switch (i) {
+            case 0: return x;
+            case 1: return y;
+            case 2: return z;
+        };
+        return x;
+    };
+    __device__ __forceinline__ float& operator[](int i) {
+        switch (i) {
+            case 0: return x;
+            case 1: return y;
+            case 2: return z;
+        };
+        return x;
+    }
+};
+
+struct my_double3 {
+    double x, y, z;
+    __device__ __forceinline__ double operator[](int i) const { 
+        switch (i) {
+            case 0: return x;
+            case 1: return y;
+            case 2: return z;
+        };
+        return x;
+    };
+    __device__ __forceinline__ double& operator[](int i) {
+        switch (i) {
+            case 0: return x;
+            case 1: return y;
+            case 2: return z;
+        };
+        return x;
+    }
+};
+
+__device__ __forceinline__ my_float3 make_my_float3(float x, float y, float z)
+{
+  my_float3 t; t.x = x; t.y = y; t.z = z; return t;
+}
+
+__device__ __forceinline__ my_double3 make_my_double3(double x, double y, double z)
+{
+  my_double3 t; t.x = x; t.y = y; t.z = z; return t;
+}
+
 template<typename T>
 struct ScalarTypeToVec3 { using type = void; };
-template <> struct ScalarTypeToVec3<float> { using type = float3; };
-template <> struct ScalarTypeToVec3<double> { using type = double3; };
+template <> struct ScalarTypeToVec3<float> { using type = my_float3; };
+template <> struct ScalarTypeToVec3<double> { using type = my_double3; };
 
 template<typename T>
 struct Vec3TypeToScalar { using type = void; };
-template <> struct Vec3TypeToScalar<float3> { using type = float; };
-template <> struct Vec3TypeToScalar<double3> { using type = double; };
+template <> struct Vec3TypeToScalar<my_float3> { using type = float; };
+template <> struct Vec3TypeToScalar<my_double3> { using type = double; };
 
 
-__device__ __forceinline__ float3 make_vector(float x, float y, float z) {
-  return make_float3(x, y, z);
+__device__ __forceinline__ my_float3 make_vector(float x, float y, float z) {
+  return make_my_float3(x, y, z);
 }
 
-__device__ __forceinline__ double3 make_vector(double x, double y, double z) {
-  return make_double3(x, y, z);
+__device__ __forceinline__ my_double3 make_vector(double x, double y, double z) {
+  return make_my_double3(x, y, z);
 }
 
 template <typename vector_t>
@@ -155,18 +205,18 @@ __global__ void box_distance_forward_cuda_kernel(
     scalar_t* distances,
     bool* dis_signs,
     vector_t* closest_points) {
+    vector_t vbox = *box;
     for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
-        vector_t q = abs_vec(points[point_id]) - *box;
+        vector_t q = abs_vec(points[point_id]) - vbox;
         vector_t q_clamped = max_vec(q, scalar_t(0));
         distances[point_id] = dot(q_clamped, q_clamped) + square(min(max_vec<scalar_t, vector_t>(q), scalar_t(0)));
         dis_signs[point_id] = (q.x > 0) || (q.y > 0) || (q.z > 0);
-        closest_points[point_id] = clamp_vec(points[point_id], - *box, *box);
+        closest_points[point_id] = clamp_vec(points[point_id], - vbox, vbox);
         if (!dis_signs[point_id]) {
             int closest_face = 0;
-            scalar_t* q_pointer = reinterpret_cast<scalar_t*>(&q);
-            if (q_pointer[1] > q_pointer[closest_face]) closest_face = 1;
-            if (q_pointer[2] > q_pointer[closest_face]) closest_face = 2;
-            (reinterpret_cast<scalar_t*>(&closest_points[point_id]))[closest_face] = (reinterpret_cast<scalar_t*>(const_cast<vector_t*>(box)))[closest_face] * sign((reinterpret_cast<scalar_t*>(const_cast<vector_t*>(&points[point_id])))[closest_face]);
+            if (q[1] > q[closest_face]) closest_face = 1;
+            if (q[2] > q[closest_face]) closest_face = 2;
+            closest_points[point_id][closest_face] = vbox[closest_face] * sign(points[point_id][closest_face]);
         }
     }
 }
