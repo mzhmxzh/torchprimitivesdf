@@ -21,6 +21,18 @@ void box_distance_backward_cuda_impl(
     at::Tensor closest_points, 
     at::Tensor grad_points);
 
+void transform_points_inverse_forward_cuda_impl(
+    at::Tensor points,
+    at::Tensor matrices,
+    at::Tensor points_transformed);
+
+void transform_points_inverse_backward_cuda_impl(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor matrices,
+    at::Tensor grad_points,
+    at::Tensor grad_matrices);
+
 #endif  // WITH_CUDA
 
 void box_distance_forward_cuda(
@@ -123,6 +135,77 @@ void box_distance_backward(
     CHECK_SIZES(grad_points, num_points, 3);
 
     grad_points.set_(2 * grad_distances.unsqueeze(1) * (points - closest_points));
+}
+
+void transform_points_inverse_forward_cuda(
+    at::Tensor points,
+    at::Tensor matrices,
+    at::Tensor points_transformed) {
+    CHECK_CUDA(points);
+    CHECK_CUDA(matrices);
+    CHECK_CUDA(points_transformed);
+    CHECK_CONTIGUOUS(points);
+    CHECK_CONTIGUOUS(matrices);
+    CHECK_CONTIGUOUS(points_transformed);
+    const int num_points = points.size(0);
+    CHECK_SIZES(points, num_points, 3);
+    CHECK_SIZES(matrices, num_points, 4, 4);
+    CHECK_SIZES(points_transformed, num_points, 3);
+
+#if WITH_CUDA
+    transform_points_inverse_forward_cuda_impl(points, matrices, points_transformed);
+#else
+    AT_ERROR("transform_points_inverse_forward not built with CUDA");
+#endif
+}
+
+void transform_points_inverse_backward_cuda(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor matrices,
+    at::Tensor grad_points,
+    at::Tensor grad_matrices) {
+    
+    CHECK_CUDA(grad_points_transformed);
+    CHECK_CUDA(points);
+    CHECK_CUDA(matrices);
+    CHECK_CUDA(grad_points);
+    CHECK_CUDA(grad_matrices);
+    CHECK_CONTIGUOUS(grad_points_transformed);
+    CHECK_CONTIGUOUS(points);
+    CHECK_CONTIGUOUS(matrices);
+    CHECK_CONTIGUOUS(grad_points);
+    CHECK_CONTIGUOUS(grad_matrices);
+    const int num_points = points.size(0);
+    CHECK_SIZES(grad_points_transformed, num_points, 3);
+    CHECK_SIZES(points, num_points, 3);
+    CHECK_SIZES(matrices, num_points, 4, 4);
+    CHECK_SIZES(grad_points, num_points, 3);
+    CHECK_SIZES(grad_matrices, num_points, 4, 4);
+
+#if WITH_CUDA
+    transform_points_inverse_backward_cuda_impl(grad_points_transformed, points, matrices, grad_points, grad_matrices);
+#else
+    AT_ERROR("transform_points_inverse_backward not built with CUDA");
+#endif
+}
+
+void transform_points_inverse_forward(
+    at::Tensor points,
+    at::Tensor matrices,
+    at::Tensor points_transformed) {
+    points_transformed.set_(at::bmm(points - matrices.index({Slice(), Slice(0, 3), 3}).unsqueeze(1), matrices.index({Slice(), Slice(0, 3), Slice(0, 3)})));
+}
+
+void transform_points_inverse_backward(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points,
+    at::Tensor matrices,
+    at::Tensor grad_points,
+    at::Tensor grad_matrices) {
+    grad_points.set_(at::bmm(grad_points_transformed, matrices.index({Slice(), Slice(0, 3), Slice(0, 3)}).transpose(1, 2)));
+    grad_matrices.index_put_({Slice(), Slice(0, 3), Slice(0, 3)}, at::bmm((points - matrices.index({Slice(), Slice(0, 3), 3}).unsqueeze(1)).transpose(1, 2), grad_points_transformed));
+    grad_matrices.index_put_({Slice(), Slice(0, 3), 3}, -grad_points.sum(1));
 }
 
 }  // namespace primitive

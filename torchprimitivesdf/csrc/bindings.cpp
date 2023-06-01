@@ -8,6 +8,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("box_distance_backward_cuda", &box_distance_backward_cuda);
   m.def("box_distance_forward", &box_distance_forward);
   m.def("box_distance_backward", &box_distance_backward);
+  m.def("transform_points_inverse_forward_cuda", &transform_points_inverse_forward_cuda);
+  m.def("transform_points_inverse_backward_cuda", &transform_points_inverse_backward_cuda);
+  m.def("transform_points_inverse_forward", &transform_points_inverse_forward);
+  m.def("transform_points_inverse_backward", &transform_points_inverse_backward);
 }
 
 }  // namespace primitive

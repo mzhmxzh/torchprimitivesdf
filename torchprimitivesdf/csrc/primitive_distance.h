@@ -28,4 +28,28 @@ void box_distance_backward(
     at::Tensor closest_points, 
     at::Tensor grad_points);
 
+void transform_points_inverse_forward_cuda(
+    at::Tensor points,
+    at::Tensor matrices,
+    at::Tensor points_transformed);
+
+void transform_points_inverse_backward_cuda(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor matrices,
+    at::Tensor grad_points,
+    at::Tensor grad_matrices);
+
+void transform_points_inverse_forward(
+    at::Tensor points,
+    at::Tensor matrices,
+    at::Tensor points_transformed);
+
+void transform_points_inverse_backward(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor matrices,
+    at::Tensor grad_points,
+    at::Tensor grad_matrices);
+
 }  // namespace primitive

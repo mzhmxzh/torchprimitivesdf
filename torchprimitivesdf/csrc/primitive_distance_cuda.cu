@@ -281,6 +281,105 @@ void box_distance_backward_cuda_impl(
     CUDA_CHECK(cudaGetLastError());
 }
 
+template<typename scalar_t>
+__global__ void transform_points_inverse_forward_cuda_kernel(
+    const scalar_t* points,
+    const scalar_t* matrices,
+    int num_points, 
+    scalar_t* points_transformed) {
+    for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
+        int point_idx = point_id * 3;
+        int matrix_idx = point_id * 16;
+        scalar_t x = points[point_idx + 0] - matrices[matrix_idx + 3];
+        scalar_t y = points[point_idx + 1] - matrices[matrix_idx + 7];
+        scalar_t z = points[point_idx + 2] - matrices[matrix_idx + 11];
+        points_transformed[point_idx + 0] = x * matrices[matrix_idx + 0] + y * matrices[matrix_idx + 4] + z * matrices[matrix_idx + 8];
+        points_transformed[point_idx + 1] = x * matrices[matrix_idx + 1] + y * matrices[matrix_idx + 5] + z * matrices[matrix_idx + 9];
+        points_transformed[point_idx + 2] = x * matrices[matrix_idx + 2] + y * matrices[matrix_idx + 6] + z * matrices[matrix_idx + 10];
+    }
+}
+
+template<typename scalar_t>
+__global__ void transform_points_inverse_backward_cuda_kernel(
+    const scalar_t* grad_points_transformed,
+    const scalar_t* points,
+    const scalar_t* matrices,
+    int num_points,
+    scalar_t* grad_points,
+    scalar_t* grad_matrices) {
+    for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
+        int point_idx = point_id * 3;
+        int matrix_idx = point_id * 16;
+        scalar_t dx = grad_points_transformed[point_idx + 0];
+        scalar_t dy = grad_points_transformed[point_idx + 1];
+        scalar_t dz = grad_points_transformed[point_idx + 2];
+        scalar_t x = points[point_idx + 0] - matrices[matrix_idx + 3];
+        scalar_t y = points[point_idx + 1] - matrices[matrix_idx + 7];
+        scalar_t z = points[point_idx + 2] - matrices[matrix_idx + 11];
+
+        scalar_t gx = dx * matrices[matrix_idx + 0] + dy * matrices[matrix_idx + 1] + dz * matrices[matrix_idx + 2];
+        scalar_t gy = dx * matrices[matrix_idx + 4] + dy * matrices[matrix_idx + 5] + dz * matrices[matrix_idx + 6];
+        scalar_t gz = dx * matrices[matrix_idx + 8] + dy * matrices[matrix_idx + 9] + dz * matrices[matrix_idx + 10];
+
+        grad_points[point_idx + 0] = gx;
+        grad_points[point_idx + 1] = gy;
+        grad_points[point_idx + 2] = gz;
+
+        grad_matrices[matrix_idx + 0] = x * dx;
+        grad_matrices[matrix_idx + 1] = x * dy;
+        grad_matrices[matrix_idx + 2] = x * dz;
+        grad_matrices[matrix_idx + 3] = -gx;
+        grad_matrices[matrix_idx + 4] = y * dx;
+        grad_matrices[matrix_idx + 5] = y * dy;
+        grad_matrices[matrix_idx + 6] = y * dz;
+        grad_matrices[matrix_idx + 7] = -gy;
+        grad_matrices[matrix_idx + 8] = z * dx;
+        grad_matrices[matrix_idx + 9] = z * dy;
+        grad_matrices[matrix_idx + 10] = z * dz;
+        grad_matrices[matrix_idx + 11] = -gz;
+    }
+}
+
+void transform_points_inverse_forward_cuda_impl(
+    at::Tensor points,
+    at::Tensor matrices,
+    at::Tensor points_transformed) {
+    
+    const int num_threads = 512;
+    const int num_points = points.size(0);
+    const int num_blocks = (num_points + num_threads - 1) / num_threads;
+    using scalar_t = float;
+    const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
+    transform_points_inverse_forward_cuda_kernel<scalar_t><<<num_blocks, num_threads>>>(
+        points.data_ptr<scalar_t>(),
+        matrices.data_ptr<scalar_t>(),
+        points.size(0),
+        points_transformed.data_ptr<scalar_t>());
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void transform_points_inverse_backward_cuda_impl(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor matrices,
+    at::Tensor grad_points,
+    at::Tensor grad_matrices) {
+
+    const int num_threads = 512;
+    const int num_points = points.size(0);
+    const int num_blocks = (num_points + num_threads - 1) / num_threads;
+    using scalar_t = float;
+    const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
+    transform_points_inverse_backward_cuda_kernel<scalar_t><<<num_blocks, num_threads>>>(
+        grad_points_transformed.data_ptr<scalar_t>(),
+        points.data_ptr<scalar_t>(),
+        matrices.data_ptr<scalar_t>(),
+        points.size(0),
+        grad_points.data_ptr<scalar_t>(),
+        grad_matrices.data_ptr<scalar_t>());
+    CUDA_CHECK(cudaGetLastError());
+}
+
 }  // namespace primitive
 
 #undef PRIVATE_CASE_TYPE_AND_VAL
