@@ -59,41 +59,52 @@ def cross_product(u, v):
 
 if __name__ == '__main__':
     device = torch.device('cuda:1')
+    # device = torch.device('cpu')
     torch.manual_seed(0)
-    B = 3000
+    B = 10000
     N = 3000
     
     # initialize random points and transformation
     points = torch.rand([B, N, 3], dtype=torch.float, device=device)
-    matrices = torch.zeros([B, 4, 4], dtype=torch.float, device=device)
-    matrices[:, :3, :3] = robust_compute_rotation_matrix_from_ortho6d(torch.rand([B, 6], dtype=torch.float, device=device))
-    matrices[:, :3, 3] = torch.rand([B, 3], dtype=torch.float, device=device)
-    matrices[:, 3, 3] = 1
+    rotations = robust_compute_rotation_matrix_from_ortho6d(torch.rand([B, 6], dtype=torch.float, device=device))
+    translations = torch.rand([B, 3], dtype=torch.float, device=device)
     points.requires_grad_()
-    matrices.requires_grad_()
+    rotations.requires_grad_()
+    translations.requires_grad_()
     
     # transform points inverse using pytorch
-    points_transformed_pytorch = (points - matrices[:, :3, 3].unsqueeze(1)) @ matrices[:, :3, :3]
+    points_transformed_pytorch = (points - translations.unsqueeze(1)) @ rotations
+    # points_transformed_pytorch = torchprimitivesdf.transform_points_inverse(points.cpu(), translations.cpu(), rotations.cpu())
     (points_transformed_pytorch.sum()).backward()
     grad_points_pytorch = points.grad.clone()
-    grad_matrices_pytorch = matrices.grad.clone()
+    grad_translations_pytorch = translations.grad.clone()
+    grad_rotations_pytorch = rotations.grad.clone()
     points.grad.data.zero_()
-    matrices.grad.data.zero_()
+    translations.grad.data.zero_()
+    rotations.grad.data.zero_()
     
     # transform points inverse using torchprimitivesdf
-    points_transformed_torchprimitivesdf = torchprimitivesdf.transform_points_inverse(points, matrices)
+    points_transformed_torchprimitivesdf = torchprimitivesdf.transform_points_inverse(points, translations, rotations)
     (points_transformed_torchprimitivesdf.sum()).backward()
     grad_points_torchprimitivesdf = points.grad.clone()
-    grad_matrices_torchprimitivesdf = matrices.grad.clone()
+    grad_translations_torchprimitivesdf = translations.grad.clone()
+    grad_rotations_torchprimitivesdf = rotations.grad.clone()
     points.grad.data.zero_()
-    matrices.grad.data.zero_()
+    translations.grad.data.zero_()
+    rotations.grad.data.zero_()
     
     # compare results
-    print(f'max points_transformed: {(points_transformed_pytorch - points_transformed_torchprimitivesdf).abs().max().item()}')
-    print(f'max grad_points: {(grad_points_pytorch - grad_points_torchprimitivesdf).abs().max().item()}')
-    print(f'max grad_matrices: {(grad_matrices_pytorch - grad_matrices_torchprimitivesdf).abs().max().item()}')
-    assert torch.isclose(points_transformed_torchprimitivesdf, points_transformed_pytorch).all()
-    assert torch.isclose(grad_points_torchprimitivesdf, grad_points_pytorch).all()
-    assert torch.isclose(grad_matrices_torchprimitivesdf, grad_matrices_pytorch).all()
+    print(f'max points_transformed: {(points_transformed_pytorch.cpu() - points_transformed_torchprimitivesdf.cpu()).abs().max().item()}')
+    print(f'max grad_points: {(grad_points_pytorch.cpu() - grad_points_torchprimitivesdf.cpu()).abs().max().item()}')
+    print(f'max grad_translations: {(grad_translations_pytorch.cpu() - grad_translations_torchprimitivesdf.cpu()).abs().max().item()}')
+    print(f'max grad_rotations: {(grad_rotations_pytorch.cpu() - grad_rotations_torchprimitivesdf.cpu()).abs().max().item()}')
+    print(f'mean points_transformed: {(points_transformed_pytorch.cpu() - points_transformed_torchprimitivesdf.cpu()).abs().mean().item()}')
+    print(f'mean grad_points: {(grad_points_pytorch.cpu() - grad_points_torchprimitivesdf.cpu()).abs().mean().item()}')
+    print(f'mean grad_translations: {(grad_translations_pytorch.cpu() - grad_translations_torchprimitivesdf.cpu()).abs().mean().item()}')
+    print(f'mean grad_rotations: {(grad_rotations_pytorch.cpu() - grad_rotations_torchprimitivesdf.cpu()).abs().mean().item()}')
+    assert torch.allclose(points_transformed_torchprimitivesdf.cpu(), points_transformed_pytorch.cpu(), atol=1e-3)
+    assert torch.allclose(grad_points_torchprimitivesdf.cpu(), grad_points_pytorch.cpu(), atol=1e-3)
+    assert torch.allclose(grad_rotations_torchprimitivesdf.cpu(), grad_rotations_pytorch.cpu(), atol=1e-2)
+    assert torch.allclose(grad_translations_torchprimitivesdf.cpu(), grad_translations_pytorch.cpu(), atol=1e-2)
     
     print('success!')

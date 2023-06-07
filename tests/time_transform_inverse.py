@@ -57,16 +57,16 @@ def cross_product(u, v):
         
     return out
 
-def time_pytorch(points, matrices):
+def time_pytorch(points, translations, rotations):
     st = time.time()
-    points_transformed_pytorch = (points - matrices[:, :3, 3].unsqueeze(1)) @ matrices[:, :3, :3]
+    points_transformed_pytorch = (points - translations.unsqueeze(1)) @ rotations
     (points_transformed_pytorch.sum()).backward()
     en = time.time()
     print(f'pytorch: {format(en - st, ".5")}')
 
-def time_torchprimitivesdf(points, matrices):
+def time_torchprimitivesdf(points, translations, rotations):
     st = time.time()
-    points_transformed_torchprimitivesdf = torchprimitivesdf.transform_points_inverse(points, matrices)
+    points_transformed_torchprimitivesdf = torchprimitivesdf.transform_points_inverse(points, translations, rotations)
     (points_transformed_torchprimitivesdf.sum()).backward()
     en = time.time()
     print(f'torchprimitivesdf: {format(en - st, ".5")}')
@@ -74,29 +74,26 @@ def time_torchprimitivesdf(points, matrices):
 if __name__ == '__main__':
     device = torch.device('cuda:1')
     torch.manual_seed(0)
-    B = 3000
+    B = 10000
     N = 3000
     
     # initialize random points and transformation
     points = torch.rand([B, N, 3], dtype=torch.float, device=device)
-    matrices = torch.zeros([B, 4, 4], dtype=torch.float, device=device)
-    matrices[:, :3, :3] = robust_compute_rotation_matrix_from_ortho6d(torch.rand([B, 6], dtype=torch.float, device=device))
-    matrices[:, :3, 3] = torch.rand([B, 3], dtype=torch.float, device=device)
-    matrices[:, 3, 3] = 1
+    rotations = robust_compute_rotation_matrix_from_ortho6d(torch.rand([B, 6], dtype=torch.float, device=device))
+    translations = torch.rand([B, 3], dtype=torch.float, device=device)
     points.requires_grad_()
-    matrices.requires_grad_()
+    rotations.requires_grad_()
+    translations.requires_grad_()
     
     
-    time_pytorch(points, matrices)
-    time_pytorch(points, matrices)
-    time_pytorch(points, matrices)
-    time_pytorch(points, matrices)
-    time_pytorch(points, matrices)
+    time_pytorch(points, translations, rotations)
+    time_pytorch(points, translations, rotations)
+    time_pytorch(points, translations, rotations)
+    time_pytorch(points, translations, rotations)
+    time_pytorch(points, translations, rotations)
     
-    time_torchprimitivesdf(points, matrices)
-    time_torchprimitivesdf(points, matrices)
-    time_torchprimitivesdf(points, matrices)
-    time_torchprimitivesdf(points, matrices)
-    time_torchprimitivesdf(points, matrices)
-    
-    
+    time_torchprimitivesdf(points, translations, rotations)
+    time_torchprimitivesdf(points, translations, rotations)
+    time_torchprimitivesdf(points, translations, rotations)
+    time_torchprimitivesdf(points, translations, rotations)
+    time_torchprimitivesdf(points, translations, rotations)
