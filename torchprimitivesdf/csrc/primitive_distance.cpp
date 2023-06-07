@@ -23,15 +23,18 @@ void box_distance_backward_cuda_impl(
 
 void transform_points_inverse_forward_cuda_impl(
     at::Tensor points,
-    at::Tensor matrices,
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor points_transformed);
 
 void transform_points_inverse_backward_cuda_impl(
     at::Tensor grad_points_transformed, 
     at::Tensor points, 
-    at::Tensor matrices,
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor grad_points,
-    at::Tensor grad_matrices);
+    at::Tensor grad_translations,
+    at::Tensor grad_rotations);
 
 #endif  // WITH_CUDA
 
@@ -139,21 +142,26 @@ void box_distance_backward(
 
 void transform_points_inverse_forward_cuda(
     at::Tensor points,
-    at::Tensor matrices,
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor points_transformed) {
     CHECK_CUDA(points);
-    CHECK_CUDA(matrices);
+    CHECK_CUDA(translations);
+    CHECK_CUDA(rotations);
     CHECK_CUDA(points_transformed);
     CHECK_CONTIGUOUS(points);
-    CHECK_CONTIGUOUS(matrices);
+    CHECK_CONTIGUOUS(translations);
+    CHECK_CONTIGUOUS(rotations);
     CHECK_CONTIGUOUS(points_transformed);
-    const int num_points = points.size(0);
-    CHECK_SIZES(points, num_points, 3);
-    CHECK_SIZES(matrices, num_points, 4, 4);
-    CHECK_SIZES(points_transformed, num_points, 3);
+    const int batch_size = points.size(0);
+    const int num_points = points.size(1);
+    CHECK_SIZES(points, batch_size, num_points, 3);
+    CHECK_SIZES(translations, batch_size, 3);
+    CHECK_SIZES(rotations, batch_size, 3, 3);
+    CHECK_SIZES(points_transformed, batch_size, num_points, 3);
 
 #if WITH_CUDA
-    transform_points_inverse_forward_cuda_impl(points, matrices, points_transformed);
+    transform_points_inverse_forward_cuda_impl(points, translations, rotations, points_transformed);
 #else
     AT_ERROR("transform_points_inverse_forward not built with CUDA");
 #endif
@@ -162,29 +170,38 @@ void transform_points_inverse_forward_cuda(
 void transform_points_inverse_backward_cuda(
     at::Tensor grad_points_transformed, 
     at::Tensor points, 
-    at::Tensor matrices,
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor grad_points,
-    at::Tensor grad_matrices) {
+    at::Tensor grad_translations,
+    at::Tensor grad_rotations) {
     
     CHECK_CUDA(grad_points_transformed);
     CHECK_CUDA(points);
-    CHECK_CUDA(matrices);
+    CHECK_CUDA(translations);
+    CHECK_CUDA(rotations);
     CHECK_CUDA(grad_points);
-    CHECK_CUDA(grad_matrices);
+    CHECK_CUDA(grad_translations);
+    CHECK_CUDA(grad_rotations);
     CHECK_CONTIGUOUS(grad_points_transformed);
     CHECK_CONTIGUOUS(points);
-    CHECK_CONTIGUOUS(matrices);
+    CHECK_CONTIGUOUS(translations);
+    CHECK_CONTIGUOUS(rotations);
     CHECK_CONTIGUOUS(grad_points);
-    CHECK_CONTIGUOUS(grad_matrices);
-    const int num_points = points.size(0);
-    CHECK_SIZES(grad_points_transformed, num_points, 3);
-    CHECK_SIZES(points, num_points, 3);
-    CHECK_SIZES(matrices, num_points, 4, 4);
-    CHECK_SIZES(grad_points, num_points, 3);
-    CHECK_SIZES(grad_matrices, num_points, 4, 4);
+    CHECK_CONTIGUOUS(grad_translations);
+    CHECK_CONTIGUOUS(grad_rotations);
+    const int batch_size = points.size(0);
+    const int num_points = points.size(1);
+    CHECK_SIZES(grad_points_transformed, batch_size, num_points, 3);
+    CHECK_SIZES(points, batch_size, num_points, 3);
+    CHECK_SIZES(translations, batch_size, 3);
+    CHECK_SIZES(rotations, batch_size, 3, 3);
+    CHECK_SIZES(grad_points, batch_size, num_points, 3);
+    CHECK_SIZES(grad_translations, batch_size, 3);
+    CHECK_SIZES(grad_rotations, batch_size, 3, 3);
 
 #if WITH_CUDA
-    transform_points_inverse_backward_cuda_impl(grad_points_transformed, points, matrices, grad_points, grad_matrices);
+    transform_points_inverse_backward_cuda_impl(grad_points_transformed, points, translations, rotations, grad_points, grad_translations, grad_rotations);
 #else
     AT_ERROR("transform_points_inverse_backward not built with CUDA");
 #endif
@@ -192,20 +209,23 @@ void transform_points_inverse_backward_cuda(
 
 void transform_points_inverse_forward(
     at::Tensor points,
-    at::Tensor matrices,
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor points_transformed) {
-    points_transformed.set_(at::bmm(points - matrices.index({Slice(), Slice(0, 3), 3}).unsqueeze(1), matrices.index({Slice(), Slice(0, 3), Slice(0, 3)})));
+    points_transformed.set_(at::bmm(points - translations.unsqueeze(1), rotations));
 }
 
 void transform_points_inverse_backward(
     at::Tensor grad_points_transformed, 
-    at::Tensor points,
-    at::Tensor matrices,
+    at::Tensor points, 
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor grad_points,
-    at::Tensor grad_matrices) {
-    grad_points.set_(at::bmm(grad_points_transformed, matrices.index({Slice(), Slice(0, 3), Slice(0, 3)}).transpose(1, 2)));
-    grad_matrices.index_put_({Slice(), Slice(0, 3), Slice(0, 3)}, at::bmm((points - matrices.index({Slice(), Slice(0, 3), 3}).unsqueeze(1)).transpose(1, 2), grad_points_transformed));
-    grad_matrices.index_put_({Slice(), Slice(0, 3), 3}, -grad_points.sum(1));
+    at::Tensor grad_translations,
+    at::Tensor grad_rotations) {
+    grad_points.set_(at::bmm(grad_points_transformed, rotations.transpose(1, 2)));
+    grad_rotations.set_(at::bmm((points - translations.unsqueeze(1)).transpose(1, 2), grad_points_transformed));
+    grad_translations.set_(-grad_points.sum(1));
 }
 
 }  // namespace primitive

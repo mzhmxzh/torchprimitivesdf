@@ -58,41 +58,34 @@ class _BoxDistanceCuda(torch.autograd.Function):
         return grad_points, grad_box
 
 
-def transform_points_inverse(points, matrices):
-    return _TransformPointsInverse.apply(points, matrices)
+def transform_points_inverse(points, translations, rotations):
+    return _TransformPointsInverse.apply(points, translations, rotations)
 
 
 class _TransformPointsInverse(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, points, matrices):
+    def forward(ctx, points, translations, rotations):
         if points.is_cuda:
-            B, N, _ = points.shape
-            points_reshaped = points.reshape(-1, 3)  # (B * N, 3)
-            matrices_reshaped = matrices.repeat_interleave(N, dim=0)  # (B * N, 4, 4)
-            points_transformed_reshaped = torch.zeros_like(points_reshaped)
-            _C.transform_points_inverse_forward_cuda(points_reshaped, matrices_reshaped, points_transformed_reshaped)
-            points_transformed = points_transformed_reshaped.reshape(B, N, 3)
+            points_transformed = torch.zeros_like(points)
+            _C.transform_points_inverse_forward_cuda(points, translations, rotations, points_transformed)
         else:
             points_transformed = torch.zeros_like(points)
-            _C.transform_points_inverse_forward(points, matrices, points_transformed)
-        ctx.save_for_backward(points, matrices)
+            _C.transform_points_inverse_forward(points, translations, rotations, points_transformed)
+        ctx.save_for_backward(points, translations, rotations)
         return points_transformed
 
     @staticmethod
     def backward(ctx, grad_points_transformed):
-        points, matrices = ctx.saved_tensors
+        points, translations, rotations = ctx.saved_tensors
         if points.is_cuda:
-            B, N, _ = points.shape
-            grad_points_transformed_reshaped = grad_points_transformed.reshape(-1, 3).contiguous()
-            points_reshaped = points.reshape(-1, 3)
-            matrices_reshaped = matrices.repeat_interleave(N, 0)
-            grad_points_reshaped = torch.zeros_like(points_reshaped)
-            grad_matrices_reshaped = torch.zeros_like(matrices_reshaped)
-            _C.transform_points_inverse_backward_cuda(grad_points_transformed_reshaped, points_reshaped, matrices_reshaped, grad_points_reshaped, grad_matrices_reshaped)
-            grad_points = grad_points_reshaped.reshape(B, N, 3)
-            grad_matrices = grad_matrices_reshaped.reshape(B, N, 4, 4).sum(dim=1)
+            grad_points_transformed = grad_points_transformed.contiguous()
+            grad_points = torch.zeros_like(points)
+            grad_translations = torch.zeros_like(translations)
+            grad_rotations = torch.zeros_like(rotations)
+            _C.transform_points_inverse_backward_cuda(grad_points_transformed, points, translations, rotations, grad_points, grad_translations, grad_rotations)
         else:
             grad_points = torch.zeros_like(points)
-            grad_matrices = torch.zeros_like(matrices)
-            _C.transform_points_inverse_backward(grad_points_transformed, points, matrices, grad_points, grad_matrices)
-        return grad_points, grad_matrices
+            grad_translations = torch.zeros_like(translations)
+            grad_rotations = torch.zeros_like(rotations)
+            _C.transform_points_inverse_backward(grad_points_transformed, points, translations, rotations, grad_points, grad_translations, grad_rotations)
+        return grad_points, grad_translations, grad_rotations

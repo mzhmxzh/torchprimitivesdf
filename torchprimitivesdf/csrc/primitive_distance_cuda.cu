@@ -284,76 +284,138 @@ void box_distance_backward_cuda_impl(
 template<typename scalar_t>
 __global__ void transform_points_inverse_forward_cuda_kernel(
     const scalar_t* points,
-    const scalar_t* matrices,
+    const scalar_t* translations,
+    const scalar_t* rotations,
+    int batch_size, 
     int num_points, 
     scalar_t* points_transformed) {
-    for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
-        int point_idx = point_id * 3;
-        int matrix_idx = point_id * 16;
-        scalar_t x = points[point_idx + 0] - matrices[matrix_idx + 3];
-        scalar_t y = points[point_idx + 1] - matrices[matrix_idx + 7];
-        scalar_t z = points[point_idx + 2] - matrices[matrix_idx + 11];
-        points_transformed[point_idx + 0] = x * matrices[matrix_idx + 0] + y * matrices[matrix_idx + 4] + z * matrices[matrix_idx + 8];
-        points_transformed[point_idx + 1] = x * matrices[matrix_idx + 1] + y * matrices[matrix_idx + 5] + z * matrices[matrix_idx + 9];
-        points_transformed[point_idx + 2] = x * matrices[matrix_idx + 2] + y * matrices[matrix_idx + 6] + z * matrices[matrix_idx + 10];
+    __shared__ scalar_t translation[3];
+    __shared__ scalar_t rotation[9];
+    // store translation and rotation into shared memory
+    int batch_id = blockIdx.x;
+    if (threadIdx.y < 9) {
+        rotation[threadIdx.y] = rotations[batch_id * 9 + threadIdx.y];
+    }
+    if (threadIdx.y < 3) {
+        translation[threadIdx.y] = translations[batch_id * 3 + threadIdx.y];
+    }
+    __syncthreads();
+    // translate and rotate points
+    for (int point_id = threadIdx.y + blockIdx.y * blockDim.y; point_id < num_points; point_id += blockDim.y * gridDim.y) {
+        int point_idx = batch_id * num_points * 3 + point_id * 3;
+        scalar_t x = points[point_idx + 0] - translation[0];
+        scalar_t y = points[point_idx + 1] - translation[1];
+        scalar_t z = points[point_idx + 2] - translation[2];
+        points_transformed[point_idx + 0] = x * rotation[0] + y * rotation[3] + z * rotation[6];
+        points_transformed[point_idx + 1] = x * rotation[1] + y * rotation[4] + z * rotation[7];
+        points_transformed[point_idx + 2] = x * rotation[2] + y * rotation[5] + z * rotation[8];
     }
 }
 
-template<typename scalar_t>
+template <unsigned int blockSize>
+__device__ void warpReduce(volatile float sdata[], const unsigned int tid) {
+    if (blockSize >= 64) sdata[tid] += sdata[tid + 32];
+    if (blockSize >= 32) sdata[tid] += sdata[tid + 16];
+    if (blockSize >= 16) sdata[tid] += sdata[tid + 8];
+    if (blockSize >= 8) sdata[tid] += sdata[tid + 4];
+    if (blockSize >= 4) sdata[tid] += sdata[tid + 2];
+    if (blockSize >= 2) sdata[tid] += sdata[tid + 1];
+}
+
+template<typename scalar_t, unsigned int blockSize>
 __global__ void transform_points_inverse_backward_cuda_kernel(
     const scalar_t* grad_points_transformed,
     const scalar_t* points,
-    const scalar_t* matrices,
+    const scalar_t* translations,
+    const scalar_t* rotations,
+    int batch_size,
     int num_points,
     scalar_t* grad_points,
-    scalar_t* grad_matrices) {
-    for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
-        int point_idx = point_id * 3;
-        int matrix_idx = point_id * 16;
+    scalar_t* grad_translations,
+    scalar_t* grad_rotations) {
+    extern __shared__ scalar_t sdata[];
+    scalar_t *translation = &sdata[blockDim.y];
+    scalar_t *rotation = &translation[3];
+    // store translation and rotation into shared memory
+    int batch_id = blockIdx.x;
+    if (threadIdx.y < 9) {
+        rotation[threadIdx.y] = rotations[batch_id * 9 + threadIdx.y];
+    }
+    if (threadIdx.y < 3) {
+        translation[threadIdx.y] = translations[batch_id * 3 + threadIdx.y];
+    }
+    __syncthreads();
+    // compute gradients
+    scalar_t grad_translations_broadcasted[] = { 0, 0, 0 };
+    scalar_t grad_rotations_broadcasted[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    for (int point_id = threadIdx.y + blockIdx.y * blockDim.y; point_id < num_points; point_id += blockDim.y * gridDim.y) {
+        int point_idx = batch_id * num_points * 3 + point_id * 3;
         scalar_t dx = grad_points_transformed[point_idx + 0];
         scalar_t dy = grad_points_transformed[point_idx + 1];
         scalar_t dz = grad_points_transformed[point_idx + 2];
-        scalar_t x = points[point_idx + 0] - matrices[matrix_idx + 3];
-        scalar_t y = points[point_idx + 1] - matrices[matrix_idx + 7];
-        scalar_t z = points[point_idx + 2] - matrices[matrix_idx + 11];
-
-        scalar_t gx = dx * matrices[matrix_idx + 0] + dy * matrices[matrix_idx + 1] + dz * matrices[matrix_idx + 2];
-        scalar_t gy = dx * matrices[matrix_idx + 4] + dy * matrices[matrix_idx + 5] + dz * matrices[matrix_idx + 6];
-        scalar_t gz = dx * matrices[matrix_idx + 8] + dy * matrices[matrix_idx + 9] + dz * matrices[matrix_idx + 10];
-
+        scalar_t x = points[point_idx + 0] - translation[0];
+        scalar_t y = points[point_idx + 1] - translation[1];
+        scalar_t z = points[point_idx + 2] - translation[2];
+        scalar_t gx = dx * rotation[0] + dy * rotation[1] + dz * rotation[2];
+        scalar_t gy = dx * rotation[3] + dy * rotation[4] + dz * rotation[5];
+        scalar_t gz = dx * rotation[6] + dy * rotation[7] + dz * rotation[8];
+        grad_rotations_broadcasted[0] += x * dx;
+        grad_rotations_broadcasted[1] += x * dy;
+        grad_rotations_broadcasted[2] += x * dz;
+        grad_rotations_broadcasted[3] += y * dx;
+        grad_rotations_broadcasted[4] += y * dy;
+        grad_rotations_broadcasted[5] += y * dz;
+        grad_rotations_broadcasted[6] += z * dx;
+        grad_rotations_broadcasted[7] += z * dy;
+        grad_rotations_broadcasted[8] += z * dz;
         grad_points[point_idx + 0] = gx;
         grad_points[point_idx + 1] = gy;
         grad_points[point_idx + 2] = gz;
-
-        grad_matrices[matrix_idx + 0] = x * dx;
-        grad_matrices[matrix_idx + 1] = x * dy;
-        grad_matrices[matrix_idx + 2] = x * dz;
-        grad_matrices[matrix_idx + 3] = -gx;
-        grad_matrices[matrix_idx + 4] = y * dx;
-        grad_matrices[matrix_idx + 5] = y * dy;
-        grad_matrices[matrix_idx + 6] = y * dz;
-        grad_matrices[matrix_idx + 7] = -gy;
-        grad_matrices[matrix_idx + 8] = z * dx;
-        grad_matrices[matrix_idx + 9] = z * dy;
-        grad_matrices[matrix_idx + 10] = z * dz;
-        grad_matrices[matrix_idx + 11] = -gz;
+        grad_translations_broadcasted[0] -= gx;
+        grad_translations_broadcasted[1] -= gy;
+        grad_translations_broadcasted[2] -= gz;
+    }
+    // reduce results
+    for (int i = 0; i < 3; i++) {
+        sdata[threadIdx.y] = grad_translations_broadcasted[i];
+        __syncthreads();
+        if (blockSize >= 512) { if (threadIdx.y < 256) { sdata[threadIdx.y] += sdata[threadIdx.y + 256]; } __syncthreads(); }
+        if (blockSize >= 256) { if (threadIdx.y < 128) { sdata[threadIdx.y] += sdata[threadIdx.y + 128]; } __syncthreads(); }
+        if (blockSize >= 128) { if (threadIdx.y < 64) { sdata[threadIdx.y] += sdata[threadIdx.y + 64]; } __syncthreads(); }
+        if (threadIdx.y < 32) warpReduce<blockSize>(sdata, threadIdx.y);
+        if (threadIdx.y == 0) grad_translations[batch_id * 3 + i] = sdata[0];
+        __syncthreads();
+    }
+    for (int i = 0; i < 9; i++) {
+        sdata[threadIdx.y] = grad_rotations_broadcasted[i];
+        __syncthreads();
+        if (blockSize >= 512) { if (threadIdx.y < 256) { sdata[threadIdx.y] += sdata[threadIdx.y + 256]; } __syncthreads(); }
+        if (blockSize >= 256) { if (threadIdx.y < 128) { sdata[threadIdx.y] += sdata[threadIdx.y + 128]; } __syncthreads(); }
+        if (blockSize >= 128) { if (threadIdx.y < 64) { sdata[threadIdx.y] += sdata[threadIdx.y + 64]; } __syncthreads(); }
+        if (threadIdx.y < 32) warpReduce<blockSize>(sdata, threadIdx.y);
+        if (threadIdx.y == 0) grad_rotations[batch_id * 9 + i] = sdata[0];
+        __syncthreads();
     }
 }
 
 void transform_points_inverse_forward_cuda_impl(
     at::Tensor points,
-    at::Tensor matrices,
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor points_transformed) {
     
-    const int num_threads = 512;
-    const int num_points = points.size(0);
-    const int num_blocks = (num_points + num_threads - 1) / num_threads;
+    const int batch_size = points.size(0);
+    const int num_points = points.size(1);
+    dim3 num_threads(1, 512);
+    dim3 num_blocks(batch_size, 1);
     using scalar_t = float;
     const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
     transform_points_inverse_forward_cuda_kernel<scalar_t><<<num_blocks, num_threads>>>(
         points.data_ptr<scalar_t>(),
-        matrices.data_ptr<scalar_t>(),
-        points.size(0),
+        translations.data_ptr<scalar_t>(),
+        rotations.data_ptr<scalar_t>(),
+        batch_size,
+        num_points,
         points_transformed.data_ptr<scalar_t>());
     CUDA_CHECK(cudaGetLastError());
 }
@@ -361,22 +423,28 @@ void transform_points_inverse_forward_cuda_impl(
 void transform_points_inverse_backward_cuda_impl(
     at::Tensor grad_points_transformed, 
     at::Tensor points, 
-    at::Tensor matrices,
+    at::Tensor translations,
+    at::Tensor rotations,
     at::Tensor grad_points,
-    at::Tensor grad_matrices) {
+    at::Tensor grad_translations,
+    at::Tensor grad_rotations) {
 
-    const int num_threads = 512;
-    const int num_points = points.size(0);
-    const int num_blocks = (num_points + num_threads - 1) / num_threads;
+    const int batch_size = points.size(0);
+    const int num_points = points.size(1);
+    dim3 num_threads(1, 512);
+    dim3 num_blocks(batch_size, 1);
     using scalar_t = float;
     const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
-    transform_points_inverse_backward_cuda_kernel<scalar_t><<<num_blocks, num_threads>>>(
+    transform_points_inverse_backward_cuda_kernel<scalar_t, 512><<<num_blocks, num_threads, (num_threads.y + 12) * sizeof(scalar_t)>>>(
         grad_points_transformed.data_ptr<scalar_t>(),
         points.data_ptr<scalar_t>(),
-        matrices.data_ptr<scalar_t>(),
-        points.size(0),
+        translations.data_ptr<scalar_t>(),
+        rotations.data_ptr<scalar_t>(),
+        batch_size,
+        num_points,
         grad_points.data_ptr<scalar_t>(),
-        grad_matrices.data_ptr<scalar_t>());
+        grad_translations.data_ptr<scalar_t>(),
+        grad_rotations.data_ptr<scalar_t>());
     CUDA_CHECK(cudaGetLastError());
 }
 
