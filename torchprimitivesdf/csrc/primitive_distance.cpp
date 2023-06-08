@@ -36,6 +36,19 @@ void transform_points_inverse_backward_cuda_impl(
     at::Tensor grad_translations,
     at::Tensor grad_rotations);
 
+void fixed_transform_points_inverse_forward_cuda_impl(
+    at::Tensor points,
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor points_transformed);
+
+void fixed_transform_points_inverse_backward_cuda_impl(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor grad_points);
+
 #endif  // WITH_CUDA
 
 void box_distance_forward_cuda(
@@ -226,6 +239,79 @@ void transform_points_inverse_backward(
     grad_points.set_(at::bmm(grad_points_transformed, rotations.transpose(1, 2)));
     grad_rotations.set_(at::bmm((points - translations.unsqueeze(1)).transpose(1, 2), grad_points_transformed));
     grad_translations.set_(-grad_points.sum(1));
+}
+
+void fixed_transform_points_inverse_forward_cuda(
+    at::Tensor points,
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor points_transformed) {
+    CHECK_CUDA(points);
+    CHECK_CUDA(translations);
+    CHECK_CUDA(rotations);
+    CHECK_CUDA(points_transformed);
+    CHECK_CONTIGUOUS(points);
+    CHECK_CONTIGUOUS(translations);
+    CHECK_CONTIGUOUS(rotations);
+    CHECK_CONTIGUOUS(points_transformed);
+    const int num_points = points.size(0);
+    CHECK_SIZES(points, num_points, 3);
+    CHECK_SIZES(translations, 3);
+    CHECK_SIZES(rotations, 3, 3);
+    CHECK_SIZES(points_transformed, num_points, 3);
+
+#if WITH_CUDA
+    fixed_transform_points_inverse_forward_cuda_impl(points, translations, rotations, points_transformed);
+#else
+    AT_ERROR("fixed_transform_points_inverse_forward not built with CUDA");
+#endif
+}
+
+void fixed_transform_points_inverse_backward_cuda(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor grad_points) {
+    CHECK_CUDA(grad_points_transformed);
+    CHECK_CUDA(points);
+    CHECK_CUDA(translations);
+    CHECK_CUDA(rotations);
+    CHECK_CUDA(grad_points);
+    CHECK_CONTIGUOUS(grad_points_transformed);
+    CHECK_CONTIGUOUS(points);
+    CHECK_CONTIGUOUS(translations);
+    CHECK_CONTIGUOUS(rotations);
+    CHECK_CONTIGUOUS(grad_points);
+    const int num_points = points.size(0);
+    CHECK_SIZES(grad_points_transformed, num_points, 3);
+    CHECK_SIZES(points, num_points, 3);
+    CHECK_SIZES(translations, 3);
+    CHECK_SIZES(rotations, 3, 3);
+    CHECK_SIZES(grad_points, num_points, 3);
+
+#if WITH_CUDA
+    fixed_transform_points_inverse_backward_cuda_impl(grad_points_transformed, points, translations, rotations, grad_points);
+#else
+    AT_ERROR("fixed_transform_points_inverse_backward not built with CUDA");
+#endif
+}
+
+void fixed_transform_points_inverse_forward(
+    at::Tensor points,
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor points_transformed) {
+    points_transformed.set_(at::bmm(points - translations, rotations));
+}
+
+void fixed_transform_points_inverse_backward(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor grad_points) {
+    grad_points.set_(at::bmm(grad_points_transformed, rotations.transpose(0, 1)));
 }
 
 }  // namespace primitive

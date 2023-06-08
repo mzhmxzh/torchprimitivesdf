@@ -448,6 +448,103 @@ void transform_points_inverse_backward_cuda_impl(
     CUDA_CHECK(cudaGetLastError());
 }
 
+template<typename scalar_t>
+__global__ void fixed_transform_points_inverse_forward_cuda_kernel(
+    const scalar_t* points,
+    const scalar_t* translations,
+    const scalar_t* rotations,
+    int num_points, 
+    scalar_t* points_transformed) {
+    __shared__ scalar_t translation[3];
+    __shared__ scalar_t rotation[9];
+    // store translation and rotation into shared memory
+    if (threadIdx.x < 9) {
+        rotation[threadIdx.x] = rotations[threadIdx.x];
+    }
+    if (threadIdx.x < 3) {
+        translation[threadIdx.x] = translations[threadIdx.x];
+    }
+    __syncthreads();
+    // translate and rotate points
+    for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
+        int point_idx = point_id * 3;
+        scalar_t x = points[point_idx + 0] - translation[0];
+        scalar_t y = points[point_idx + 1] - translation[1];
+        scalar_t z = points[point_idx + 2] - translation[2];
+        points_transformed[point_idx + 0] = x * rotation[0] + y * rotation[3] + z * rotation[6];
+        points_transformed[point_idx + 1] = x * rotation[1] + y * rotation[4] + z * rotation[7];
+        points_transformed[point_idx + 2] = x * rotation[2] + y * rotation[5] + z * rotation[8];
+    }
+}
+
+template<typename scalar_t>
+__global__ void fixed_transform_points_inverse_backward_cuda_kernel(
+    const scalar_t* grad_points_transformed,
+    const scalar_t* points,
+    const scalar_t* translations,
+    const scalar_t* rotations,
+    int num_points,
+    scalar_t* grad_points) {
+    __shared__ scalar_t rotation[9];
+    // store translation and rotation into shared memory
+    if (threadIdx.x < 9) {
+        rotation[threadIdx.x] = rotations[threadIdx.x];
+    }
+    __syncthreads();
+    // compute gradients
+    for (int point_id = threadIdx.x + blockIdx.x * blockDim.x; point_id < num_points; point_id += blockDim.x * gridDim.x) {
+        int point_idx = point_id * 3;
+        scalar_t dx = grad_points_transformed[point_idx + 0];
+        scalar_t dy = grad_points_transformed[point_idx + 1];
+        scalar_t dz = grad_points_transformed[point_idx + 2];
+        grad_points[point_idx + 0] = dx * rotation[0] + dy * rotation[1] + dz * rotation[2];
+        grad_points[point_idx + 1] = dx * rotation[3] + dy * rotation[4] + dz * rotation[5];
+        grad_points[point_idx + 2] = dx * rotation[6] + dy * rotation[7] + dz * rotation[8];
+    }
+}
+
+void fixed_transform_points_inverse_forward_cuda_impl(
+    at::Tensor points,
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor points_transformed) {
+
+    const int num_points = points.size(0);
+    int num_threads = 512;
+    int num_blocks = (num_points + num_threads - 1) / num_threads;
+    using scalar_t = float;
+    const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
+    fixed_transform_points_inverse_forward_cuda_kernel<scalar_t><<<num_blocks, num_threads>>>(
+        points.data_ptr<scalar_t>(),
+        translations.data_ptr<scalar_t>(),
+        rotations.data_ptr<scalar_t>(),
+        num_points,
+        points_transformed.data_ptr<scalar_t>());
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void fixed_transform_points_inverse_backward_cuda_impl(
+    at::Tensor grad_points_transformed, 
+    at::Tensor points, 
+    at::Tensor translations,
+    at::Tensor rotations,
+    at::Tensor grad_points) {
+
+    const int num_points = points.size(0);
+    int num_threads = 512;
+    int num_blocks = (num_points + num_threads - 1) / num_threads;
+    using scalar_t = float;
+    const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
+    fixed_transform_points_inverse_backward_cuda_kernel<scalar_t><<<num_blocks, num_threads, 12 * sizeof(scalar_t)>>>(
+        grad_points_transformed.data_ptr<scalar_t>(),
+        points.data_ptr<scalar_t>(),
+        translations.data_ptr<scalar_t>(),
+        rotations.data_ptr<scalar_t>(),
+        num_points,
+        grad_points.data_ptr<scalar_t>());
+    CUDA_CHECK(cudaGetLastError());
+}
+
 }  // namespace primitive
 
 #undef PRIVATE_CASE_TYPE_AND_VAL
