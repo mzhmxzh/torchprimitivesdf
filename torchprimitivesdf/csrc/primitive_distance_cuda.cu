@@ -535,7 +535,7 @@ void fixed_transform_points_inverse_backward_cuda_impl(
     int num_blocks = (num_points + num_threads - 1) / num_threads;
     using scalar_t = float;
     const at::cuda::OptionalCUDAGuard device_guard(at::device_of(points));
-    fixed_transform_points_inverse_backward_cuda_kernel<scalar_t><<<num_blocks, num_threads, 12 * sizeof(scalar_t)>>>(
+    fixed_transform_points_inverse_backward_cuda_kernel<scalar_t><<<num_blocks, num_threads>>>(
         grad_points_transformed.data_ptr<scalar_t>(),
         points.data_ptr<scalar_t>(),
         translations.data_ptr<scalar_t>(),
