@@ -66,6 +66,12 @@ class _TransformPointsInverse(torch.autograd.Function):
     @staticmethod
     def forward(ctx, points, translations, rotations):
         if points.is_cuda:
+            if not points.is_contiguous():
+                points = points.contiguous()
+            if not translations.is_contiguous():
+                translations = translations.contiguous()
+            if not rotations.is_contiguous():
+                rotations = rotations.contiguous()
             points_transformed = torch.zeros_like(points)
             _C.transform_points_inverse_forward_cuda(points, translations, rotations, points_transformed)
         else:
@@ -78,7 +84,8 @@ class _TransformPointsInverse(torch.autograd.Function):
     def backward(ctx, grad_points_transformed):
         points, translations, rotations = ctx.saved_tensors
         if points.is_cuda:
-            grad_points_transformed = grad_points_transformed.contiguous()
+            if not grad_points_transformed.is_contiguous():
+                grad_points_transformed = grad_points_transformed.contiguous()
             grad_points = torch.zeros_like(points)
             grad_translations = torch.zeros_like(translations)
             grad_rotations = torch.zeros_like(rotations)
